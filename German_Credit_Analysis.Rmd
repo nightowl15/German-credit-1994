@@ -1,0 +1,367 @@
+---
+title: "German_Credit_Analysis"
+author: "Dmitriy Sova"
+date: "2025-01-15"
+output: html_document
+---
+
+
+```{r Reading and factoring data, include=FALSE}
+# reading German credit 1994 data from desktop
+gc_data <- read.table('replace with working directory')
+
+# The description states that there are no missing values. Double check for the number of missing values.
+missing_values <- sum(is.na(gc_data))
+missing_values
+cat("Total missing values: ", missing_values, "\n")
+
+# Checks the number of missing values for each column.
+sapply(gc_data, function(x) sum(is.na(x)))
+
+# 21 total columns, 20 features and 1 target The target variable is used for supervised learning. It will help train the model. 
+ncol(gc_data)
+
+# check the column names and the elements inside the columns
+str(gc_data)
+
+# looking at the repository and the summary information about the German credit data we see a brief description of each column and rewrite the column names for clarity
+
+# The response variable (target variable) in the str() functions tells us that it is quantitative, indicated by the type being int (integer value) when the data description tells us that it is qualitative (1 = good, 2 = bad). The data set information on the site tells us that this is a classification problem and is confirmed by the description of the target variable
+colnames(gc_data) <- c("checking_account", "duration", "credit_history", "purpose", "credit_amount", "saving_account", "present_employment_status", "installment_rate", "sex", "other_debtor", "present_residence", "property", "age", "other_installment_plans", "housing", "n_existing_credits", "job", "n_people_liable", "telephone", "foreign", "response")
+
+
+# Here we print a summary of the data and notice that the qualitative variables are not showing how many categories they have and the number for each of them. It simply tells us the class which is character and the total number of observations, but no further information about them. We need to factor each one accordingly.
+summary(gc_data)
+
+# creating a all numeric variable copy of gc_data so we can use SMOTE technique for bias corrections
+gc_data_numeric <- gc_data
+
+
+# The first variable needs to be ordered factored
+gc_data$checking_account <- factor(
+  gc_data$checking_account,
+  levels = c("A11", "A12", "A13", "A14"),
+  labels = c("< 0 DM", "0-199 DM", ">= 200 DM", "no checking account"),
+  ordered = TRUE)
+
+# Credit history is default factored because there's no distinct order to the categories.
+gc_data$credit_history <- as.factor(gc_data$credit_history)
+
+# Purpose is default factored
+gc_data$purpose <- as.factor(gc_data$purpose)
+
+# Saving account is ordered factored, We place unknown/no savings account last in the order following the description and we can change its place later to check if theres a difference.
+gc_data$saving_account <- factor(
+  gc_data$saving_account,
+  levels = c("A61", "A62", "A63", "A64", "A65"),
+  labels = c("< 100 DM", "100-499 DM", "500-999 DM", ">= 1000 DM", "Uknown/no savings account"),
+  ordered = TRUE)
+
+# Present_employment_status is ordered factored
+gc_data$present_employment_status <- factor(
+  gc_data$present_employment_status,
+  levels = c("A71", "A72", "A73", "A74", "A75"),
+  labels = c("unemployed", "< 1 year", "1-3 years", "4-6 years", ">= 7 years"),
+  ordered = TRUE)
+
+# Sex is default factored
+gc_data$sex <- as.factor(gc_data$sex)
+
+# Other debtor is default factored
+gc_data$other_debtor <- as.factor(gc_data$other_debtor)
+
+# Property is default factored
+gc_data$property <- as.factor(gc_data$property)
+
+# Other installment plans is default factored
+gc_data$other_installment_plans <- as.factor(gc_data$other_installment_plans)
+
+# Housing is default factored
+gc_data$housing <- as.factor(gc_data$housing)
+
+# Job is oredered factored because high paying jobs could mean more stability
+gc_data$job <- factor(
+  gc_data$job,
+  levels = c("A171", "A172", "A173", "A174"),
+  labels = c("unemployed / unskilled - non-resident", "unskilled - resident", "skilled employee / official", "management / self-employed / highly qualified employee / officer"),
+  ordered = TRUE)
+
+# Telephone is default factored
+gc_data$telephone <- as.factor(gc_data$telephone)
+
+# Foreign is default factored
+gc_data$foreign <- as.factor(gc_data$foreign)
+
+# Looking at the target variable we see the values are 1 and 2 (1 = good, 2 = bad). The description indicates that we are working with a qualitative variable and is binary yes or no, since the values currently are numeric and the initial variable is quantitative we subtract one from all the values so that we get either a 0 or 1 (0 = good, 1 = bad). Then we use the as.factor function to change the initial quantitative response variable into a qualitative variable so that the classification models interpret the variable correctly.
+gc_data$response <- gc_data$response - 1
+gc_data$response <- as.factor(gc_data$response)
+# Need to check to see if the changes we made are done correctly.
+gc_data$response
+str(gc_data)
+summary(gc_data)
+
+
+```
+
+```{r Reading necessary libraries, include=FALSE}
+# Loading in required libraries
+library(tidyverse)
+library(car)
+library(outliers)
+library(caret)
+library(randomForest)
+library(MASS)
+library(class)
+library(glmnet)
+library(boot)
+library(ROCR)
+library(smotefamily)
+```
+
+```{r Logistic Regression, echo=TRUE}
+# Fitting a logistic regression model with out data set and plotting the residuals
+set.seed(123)
+trainIndex <- createDataPartition(gc_data$response, p = 0.7, list = FALSE)
+train_data <- gc_data[trainIndex,]
+test_data <- gc_data[-trainIndex,]
+
+glm_model <- glm(response ~ ., data = train_data, family = binomial)
+summary(glm_model)
+
+# Predict on test set
+logistic_pred <- predict(glm_model, newdata = test_data, type = "response")
+logistic_pred_class <- ifelse(logistic_pred > 0.5, 1, 0)
+
+# Need to factor logistic_pred_class so it can match the levels for test_data$response
+logistic_pred_class <- factor(logistic_pred_class)
+
+levels(logistic_pred_class)
+levels(test_data$response)
+
+
+glm_conf_matrix <- confusionMatrix(logistic_pred_class, test_data$response)
+print(glm_conf_matrix)
+
+glm_accuracy <- glm_conf_matrix$overall['Accuracy']
+glm_missclassfication_rate <- 1 - glm_accuracy
+cat("The missclassification rate is: ", glm_missclassfication_rate , '\n')
+
+
+```
+
+```{r Residuals vs Fitted, eval=FALSE, include=FALSE}
+plot(fitted(glm_model), 
+     residuals(glm_model, "deviance"),
+     xlab = "Fitted",
+     ylab = "Residuals")
+abline(h = 0, col = "red")
+
+plot(fitted(glm_model), 
+     abs(residuals(glm_model, "deviance")),
+     xlab = "Fitted",
+     ylab = "Residuals")
+abline(h = 0, col = "red")
+
+qqnorm(residuals(glm_model), ylab = "Residuals")
+qqline(residuals(glm_model))
+
+residuals <- residuals(glm_model, type = "deviance")
+shapiro.test(residuals)
+```
+
+
+```{r randomForest Model}
+rf_model <- randomForest(response ~ ., data = train_data, ntree = 100)
+rf_pred <- predict(rf_model, newdata = test_data)
+rf_confusion_matrix <- confusionMatrix(rf_pred, test_data$response)
+print(rf_confusion_matrix)
+```
+
+```{r LDA and QDA}
+# Fit LDA model
+lda_model <- lda(response ~ ., data = train_data)
+
+# Predict on test set using LDA
+lda_pred <- predict(lda_model, newdata = test_data)$class
+lda_confMatrix <- confusionMatrix(lda_pred, test_data$response)
+print(lda_confMatrix)
+# Fit QDA model
+qda_model <- qda(response ~ ., data = train_data)
+
+# Predict on test set using QDA
+qda_pred <- predict(qda_model, newdata = test_data)$class
+qda_confMatrix <- confusionMatrix(qda_pred, test_data$response)
+print(qda_confMatrix)
+```
+
+```{r LASSO model}
+# Prepare data for LASSO
+x_train <- model.matrix(response ~ ., data = train_data)[,-1]  # Remove intercept
+y_train <- as.factor(train_data$response)
+
+# Fit LASSO model with cross-validation to tune lambda
+lasso_cv <- cv.glmnet(x_train, y_train, family = "binomial", alpha = 1)
+best_lambda <- lasso_cv$lambda.min
+
+# Refit LASSO model with best lambda
+lasso_model <- glmnet(x_train, y_train, family = "binomial", alpha = 1, lambda = best_lambda)
+
+# Predict on test set
+x_test <- model.matrix(response ~ ., data = test_data)[,-1]
+lasso_pred <- predict(lasso_model, newx = x_test, s = best_lambda, type = "response")
+lasso_pred_class <- ifelse(lasso_pred > 0.5, 1, 0)
+lasso_pred_class <- factor(lasso_pred_class)
+
+lasso_confMatrix <- confusionMatrix(lasso_pred_class, test_data$response)
+print(lasso_confMatrix)
+
+
+```
+
+```{r KNN with K selection, eval=FALSE, include=FALSE}
+
+# Determine optimal k using cross-validation
+
+cost <- function(labels, pred) {
+    mean(labels == ifelse(pred > 0.5, 1, 0))
+}
+
+k_values <- seq(1, 20, by = 2)
+cv_errors <- sapply(k_values, function(k) {
+    cv.glm(train_data, glm_model, K = 10, cost = cost)
+})
+print(cv_errors)
+str(cv_errors)
+# Initialize an empty vector to store the average errors for each k
+cv_mean_errors <- c()
+
+# Loop through each element in cv_errors
+for (i in 1:length(cv_errors)) {
+    # Check if the current element is numeric and extract it
+    if (is.numeric(cv_errors[[i]])) {
+        # Assuming we are interested in the mean error for each k
+        mean_error <- mean(cv_errors[[i]])
+        cv_mean_errors <- c(cv_mean_errors, mean_error)
+    } else {
+        # If an element is not numeric, skip it or handle as needed
+        cat("Skipping non-numeric element at index", i, "\n")
+    }
+}
+
+# Now, cv_mean_errors should be a vector of average errors for each k
+# Determine the k value with the smallest mean error
+optimal_k_index <- which.min(cv_mean_errors)
+optimal_k <- k_values[optimal_k_index]
+
+# Fit KNN model with optimal k
+#knn_pred <- knn(train = train_data[, -1], test = test_data[, -1], cl = train_data$response, k = optimal_k)
+
+#knn_confMatrix <- confusionMatrix(knn_pred, test_data$response)
+#print(knn_confMatrix)
+```
+
+```{r Oversampling using SMOTE, eval=FALSE, include=FALSE}
+# Apply SMOTE
+train_data_oversampled <- SMOTE(train_data, train_data$response, K = 5, dup_size = 0)
+
+# Refit models using oversampled training data
+```
+```{r Logistic regression gc_data_numeric copy}
+set.seed(123)
+trainIndex <- createDataPartition(gc_data_numeric$response, p = 0.7, list = FALSE)
+train_data <- gc_data[trainIndex,]
+test_data <- gc_data[-trainIndex,]
+
+glm_model <- glm(response ~ ., data = train_data, family = binomial)
+summary(glm_model)
+
+# Predict on test set
+logistic_pred <- predict(glm_model, newdata = test_data, type = "response")
+logistic_pred_class <- ifelse(logistic_pred > 0.5, 1, 0)
+
+# Need to factor logistic_pred_class so it can match the levels for test_data$response
+logistic_pred_class <- factor(logistic_pred_class)
+
+levels(logistic_pred_class)
+levels(test_data$response)
+
+
+glm_conf_matrix <- confusionMatrix(logistic_pred_class, test_data$response)
+print(glm_conf_matrix)
+
+glm_accuracy <- glm_conf_matrix$overall['Accuracy']
+glm_missclassfication_rate <- 1 - glm_accuracy
+cat("The missclassification rate is: ", glm_missclassfication_rate , '\n')
+
+
+
+```
+
+```{r Refitting all models with Oversampling train_data, eval=FALSE, include=FALSE}
+
+# GLM
+glm_model <- glm(response ~ ., data = train_data_oversampled, family = binomial)
+summary(glm_model)
+
+logistic_pred <- predict(glm_model, newdata = train_data_oversampled, type = "response")
+logistic_pred_class <- ifelse(logistic_pred > 0.5, 1, 0)
+
+logistic_pred_class <- factor(logistic_pred_class)
+
+glm_conf_matrix <- confusionMatrix(logistic_pred_class, train_data_oversampled$response)
+print(glm_conf_matrix)
+
+# RANDOMFOREST
+rf_model <- randomForest(response ~ ., data = train_data_oversampled, ntree = 100)
+rf_pred <- predict(rf_model, newdata = train_data_oversampled)
+rf_confusion_matrix <- confusionMatrix(rf_pred, train_data_oversampled$response)
+print(rf_confusion_matrix)
+
+# LDA
+lda_model <- lda(response ~ ., data = train_data_oversampled)
+
+
+lda_pred <- predict(lda_model, newdata = train_data_oversampled)$class
+lda_confMatrix <- confusionMatrix(lda_pred, train_data_oversampled$response)
+print(lda_confMatrix)
+
+# QDA
+qda_model <- qda(response ~ ., data = train_data_oversampled)
+
+qda_pred <- predict(qda_model, newdata = train_data_oversampled)$class
+qda_confMatrix <- confusionMatrix(qda_pred, train_data_oversampled$response)
+print(qda_confMatrix)
+
+
+# LASSO
+x_train <- model.matrix(response ~ ., data = train_data_oversampled)[,-1]  
+y_train <- as.factor(train_data_oversampled$response)
+
+
+lasso_cv <- cv.glmnet(x_train, y_train, family = "binomial", alpha = 1)
+best_lambda <- lasso_cv$lambda.min
+
+
+lasso_model <- glmnet(x_train, y_train, family = "binomial", alpha = 1, lambda = best_lambda)
+
+
+x_test <- model.matrix(response ~ ., data = train_data_oversampled)[,-1]
+lasso_pred <- predict(lasso_model, newx = x_test, s = best_lambda, type = "response")
+lasso_pred_class <- ifelse(lasso_pred > 0.5, 1, 0)
+lasso_pred_class <- factor(lasso_pred_class)
+
+lasso_confMatrix <- confusionMatrix(lasso_pred_class, train_data_oversampled$response)
+print(lasso_confMatrix)
+
+
+
+
+
+```
+
+```{r Model comparison, eval=FALSE, include=FALSE}
+# Create a summary table of model performances
+
+```
+
+
